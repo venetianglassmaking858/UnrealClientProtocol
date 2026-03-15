@@ -5,11 +5,9 @@ Accepts either a single JSON command or a JSON array of commands.
 Connects to the UE editor via TCP (4-byte LE length-prefixed framing).
 
 Usage:
-    python UCP.py -f commands.json
     echo <json> | python UCP.py
-    python UCP.py {"type":"find","class":"/Script/Engine.World"}
 
-Default mode (no arguments): reads JSON from stdin.
+Default mode: reads JSON from stdin.
 
 Environment:
     UE_HOST    (default 127.0.0.1)
@@ -91,15 +89,7 @@ def execute(commands) -> str:
 
 
 def main():
-    args = sys.argv[1:]
-
-    if args and args[0] == "-f" and len(args) >= 2:
-        with open(args[1], "r", encoding="utf-8") as f:
-            raw = f.read()
-    elif args:
-        raw = " ".join(args)
-    else:
-        raw = sys.stdin.read()
+    raw = sys.stdin.read()
 
     try:
         data = json.loads(raw)
