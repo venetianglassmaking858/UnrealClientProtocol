@@ -268,3 +268,38 @@ UWorld* FUCPParamConverter::GetBestWorld()
 	}
 	return nullptr;
 }
+
+FProperty* FUCPParamConverter::FindPropertyByNameFlexible(UClass* Class, const FString& PropertyName)
+{
+	if (!Class)
+	{
+		return nullptr;
+	}
+
+	FProperty* Prop = Class->FindPropertyByName(FName(*PropertyName));
+	if (Prop)
+	{
+		return Prop;
+	}
+
+	// UE strips the 'b' prefix from bool properties in reflection (authored name).
+	// Try toggling the prefix for flexible lookup.
+	if (PropertyName.StartsWith(TEXT("b")) && PropertyName.Len() > 1 && FChar::IsUpper(PropertyName[1]))
+	{
+		Prop = Class->FindPropertyByName(FName(*PropertyName.Mid(1)));
+		if (Prop)
+		{
+			return Prop;
+		}
+	}
+	else if (PropertyName.Len() > 0 && FChar::IsUpper(PropertyName[0]))
+	{
+		Prop = Class->FindPropertyByName(FName(*(FString(TEXT("b")) + PropertyName)));
+		if (Prop)
+		{
+			return Prop;
+		}
+	}
+
+	return nullptr;
+}

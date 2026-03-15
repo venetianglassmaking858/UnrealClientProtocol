@@ -32,6 +32,8 @@ public:
 		FProperty* Property,
 		void* ValuePtr);
 
+	static FProperty* FindPropertyByNameFlexible(UClass* Class, const FString& PropertyName);
+
 private:
 	static UObject* ResolveObjectPath(const FString& Path, UClass* ExpectedClass);
 	static UWorld* GetBestWorld();
