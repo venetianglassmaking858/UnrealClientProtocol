@@ -8,7 +8,7 @@
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
     <a href="https://www.unrealengine.com/"><img src="https://img.shields.io/badge/Unreal%20Engine-5.x-black?logo=unrealengine" alt="UE5"></a>
     <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.10+-yellow?logo=python&logoColor=white" alt="Python"></a>
-    <a href="#3-configure-the-agent-skill"><img src="https://img.shields.io/badge/Agent-Skills-purple" alt="Agent Skills"></a>
+    <a href="#3-install-agent-skills"><img src="https://img.shields.io/badge/Agent-Skills-purple" alt="Agent Skills"></a>
     <a href="README_CN.md"><img src="https://img.shields.io/badge/lang-中文-red" alt="中文"></a>
   </p>
 </p>
@@ -39,7 +39,7 @@ We believe the combination of AI Agents + atomic protocol + domain Skills will f
 - **WorldContext Auto-Injection** — No need to manually pass WorldContext parameters
 - **Security Controls** — Loopback-only binding, class path allowlists, and function blocklists
 - **Batteries-Included Python Client** — Lightweight CLI script to talk to the engine in one line
-- **Agent Skills Integration** — Ships with a Skill descriptor (compatible with Cursor / Claude Code / OpenCode, etc.) so AI agents can understand and use the protocol natively
+- **Agent Skills Integration** — Ships with Skill descriptors (compatible with Cursor / Claude Code / OpenCode, etc.) so AI agents can understand and use the protocol natively
 
 ## How It Works
 
@@ -76,37 +76,63 @@ Copy the `UnrealClientProtocol` folder into your project's `Plugins/` directory 
 Once the editor starts, the plugin automatically listens on `127.0.0.1:9876`. Test it with the bundled Python client:
 
 ```bash
-python Plugins/UnrealClientProtocol/Skills/unreal-client-protocol/scripts/UCP.py '{"type":"find","class":"/Script/Engine.World","limit":3}'
+# Create a temp JSON file, then pass it via -f to avoid shell escaping issues
+echo '{"type":"find","class":"/Script/Engine.World","limit":3}' > /tmp/ucp_test.json
+python Plugins/UnrealClientProtocol/Skills/unreal-client-protocol/scripts/UCP.py -f /tmp/ucp_test.json
+```
+
+On **PowerShell**, use:
+
+```powershell
+'{"type":"find","class":"/Script/Engine.World","limit":3}' | Set-Content -Path ucp_test.json -Encoding UTF8
+python Plugins\UnrealClientProtocol\Skills\unreal-client-protocol\scripts\UCP.py -f ucp_test.json
 ```
 
 If you see a list of World objects, you're all set.
 
-### 3. Configure the Agent Skill
+### 3. Install Agent Skills
 
-The plugin ships with a complete Skill package under [`Skills/unreal-client-protocol/`](Skills/unreal-client-protocol/) (containing the protocol descriptor `SKILL.md` and the Python client `scripts/UCP.py`). Copy the **entire folder** into your AI coding tool's Skills directory so the Agent can automatically understand and use the UCP protocol.
+The plugin ships with **4 Skill packages** under [`Skills/`](Skills/):
 
-Copy `Skills/unreal-client-protocol/` to the appropriate directory for your tool:
+| Skill | Description |
+|-------|-------------|
+| `unreal-client-protocol` | Core protocol — UCP commands, `UCP.py` client, invocation guide |
+| `unreal-graph-script` | UGS syntax reference for reading/writing graph assets |
+| `unreal-blueprint-editor` | Blueprint-specific editing workflow and patterns |
+| `unreal-material-editor` | Material-specific reading/editing workflow and patterns |
+
+Copy **all four folders** from `Skills/` into your AI tool's Skills directory:
 
 | Tool | Target Path |
 |------|-------------|
-| **Cursor** | `.cursor/skills/unreal-client-protocol/` |
-| **Claude Code** | `.claude/skills/unreal-client-protocol/` |
-| **OpenCode** | `.opencode/skills/unreal-client-protocol/` |
+| **Cursor** | `<project>/.cursor/skills/` |
+| **Claude Code** | `<project>/.claude/skills/` |
+| **OpenCode** | `<project>/.opencode/skills/` |
 | **Other** | Follow your tool's Agent Skills convention |
 
-The resulting directory structure should look like:
+The resulting directory structure:
 
 ```
-.cursor/skills/                          # or .claude/skills/, etc.
-└── unreal-client-protocol/
-    ├── SKILL.md                         # Protocol descriptor (auto-read by Agent)
-    └── scripts/
-        └── UCP.py                       # Python client (invoked via Shell by Agent)
+<project>/.cursor/skills/               # or .claude/skills/, etc.
+├── unreal-client-protocol/
+│   ├── SKILL.md                        # Protocol descriptor (auto-read by Agent)
+│   └── scripts/
+│       └── UCP.py                      # Python client (invoked via Shell by Agent)
+├── unreal-graph-script/
+│   └── SKILL.md                        # UGS syntax reference
+├── unreal-blueprint-editor/
+│   └── SKILL.md                        # Blueprint editing guide
+└── unreal-material-editor/
+    └── SKILL.md                        # Material editing guide
 ```
 
-Once in place, the Agent will automatically read SKILL.md when it receives Unreal Engine-related instructions and communicate with the editor via `scripts/UCP.py`.
+> **Important**: The `unreal-client-protocol` folder **must** include the `scripts/` subfolder with `UCP.py`. The SKILL.md instructs the Agent to locate `scripts/UCP.py` relative to itself — if the script is missing, the Agent won't be able to communicate with the engine.
 
-> **Workflow**: User gives an instruction → Agent identifies and reads SKILL.md → Builds JSON commands per the protocol → Sends them to the editor via `UCP.py` → Returns results
+> **Cross-platform note**: The SKILL.md instructs the Agent to always pass JSON via a temporary file (`-f` flag) instead of command-line arguments or stdin pipes. This avoids shell quoting/escaping issues on PowerShell, cmd, and bash.
+
+Once in place, the Agent will automatically read the relevant SKILL.md when it receives Unreal Engine-related instructions and communicate with the editor via `UCP.py`.
+
+> **Workflow**: User gives an instruction → Agent identifies and reads SKILL.md → Builds JSON commands per the protocol → Writes JSON to a temp file → Sends via `UCP.py -f` → Returns results
 
 ```mermaid
 sequenceDiagram
@@ -132,7 +158,7 @@ sequenceDiagram
 
 ### 4. Verify Agent Functionality
 
-Send the following test prompts to your Agent to confirm the Skill is configured correctly:
+Send the following test prompts to your Agent to confirm the Skills are configured correctly:
 
 - **Query the scene**: "Show me what's in the current scene"
 - **Read a property**: "What real-world time does the current sunlight correspond to?"

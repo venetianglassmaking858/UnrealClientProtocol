@@ -6,8 +6,9 @@
 #include "Modules/ModuleManager.h"
 
 class FUCPServer;
+class FUCPRequestHandler;
 
-class FUnrealClientProtocolModule : public IModuleInterface, public FTickableGameObject
+class UNREALCLIENTPROTOCOL_API FUnrealClientProtocolModule : public IModuleInterface, public FTickableGameObject
 {
 public:
 	virtual void StartupModule() override;
@@ -17,6 +18,18 @@ public:
 	virtual TStatId GetStatId() const override;
 	virtual bool IsTickable() const override { return bIsRunning; }
 	virtual bool IsTickableInEditor() const override { return true; }
+
+	FUCPRequestHandler* GetRequestHandler() const;
+
+	static FUnrealClientProtocolModule& Get()
+	{
+		return FModuleManager::GetModuleChecked<FUnrealClientProtocolModule>("UnrealClientProtocol");
+	}
+
+	static bool IsAvailable()
+	{
+		return FModuleManager::Get().IsModuleLoaded("UnrealClientProtocol");
+	}
 
 private:
 	TUniquePtr<FUCPServer> Server;

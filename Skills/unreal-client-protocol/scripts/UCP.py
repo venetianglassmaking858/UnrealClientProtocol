@@ -6,8 +6,10 @@ Connects to the UE editor via TCP (4-byte LE length-prefixed framing).
 
 Usage:
     python UCP.py -f commands.json
+    echo <json> | python UCP.py
     python UCP.py {"type":"find","class":"/Script/Engine.World"}
-    echo <json> | python UCP.py --stdin
+
+Default mode (no arguments): reads JSON from stdin.
 
 Environment:
     UE_HOST    (default 127.0.0.1)
@@ -46,14 +48,22 @@ def _recv_exact(sock: socket.socket, n: int) -> bytes:
 
 
 def _simplify(resp: dict):
-    """Strip success/result envelope.
-    Success -> return result value directly.
-    Failure -> return {error, expected?} only."""
+    """Strip success/result envelope, preserve log field.
+    Success -> return result value directly (+ log if present).
+    Failure -> return {error, expected?, log?} only."""
     if resp.get("success"):
-        return resp.get("result")
+        out = resp.get("result")
+        if "log" in resp:
+            if isinstance(out, dict):
+                out["log"] = resp["log"]
+            else:
+                out = {"result": out, "log": resp["log"]}
+        return out
     out = {"error": resp.get("error", "Unknown error")}
     if "expected" in resp:
         out["expected"] = resp["expected"]
+    if "log" in resp:
+        out["log"] = resp["log"]
     return out
 
 
@@ -67,7 +77,10 @@ def execute(commands) -> str:
             request = {"type": "batch", "commands": commands}
             resp = send_receive(sock, request)
             results = [_simplify(r) for r in resp.get("results", [])]
-            return json.dumps(results, indent=2, ensure_ascii=False)
+            output = results
+            if "log" in resp:
+                output = {"results": results, "log": resp["log"]}
+            return json.dumps(output, indent=2, ensure_ascii=False)
         else:
             resp = send_receive(sock, commands)
             return json.dumps(_simplify(resp), indent=2, ensure_ascii=False)
@@ -80,17 +93,13 @@ def execute(commands) -> str:
 def main():
     args = sys.argv[1:]
 
-    if not args:
-        print(__doc__.strip(), file=sys.stderr)
-        sys.exit(1)
-
-    if "--stdin" in args:
-        raw = sys.stdin.read()
-    elif args[0] == "-f" and len(args) >= 2:
+    if args and args[0] == "-f" and len(args) >= 2:
         with open(args[1], "r", encoding="utf-8") as f:
             raw = f.read()
-    else:
+    elif args:
         raw = " ".join(args)
+    else:
+        raw = sys.stdin.read()
 
     try:
         data = json.loads(raw)

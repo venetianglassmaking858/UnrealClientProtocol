@@ -17,12 +17,13 @@ public class UnrealClientProtocol : ModuleRules
 			"Sockets",
 			"Networking",
 			"Json",
-			"JsonUtilities"
+			"JsonUtilities",
+			"AssetRegistry"
 		});
 
-		if (Target.bBuildEditor)
-		{
-			PrivateDependencyModuleNames.Add("UnrealEd");
-		}
-	}
+        if (Target.bBuildEditor)
+        {
+            PrivateDependencyModuleNames.Add("UnrealEd");
+        }
+    }
 }

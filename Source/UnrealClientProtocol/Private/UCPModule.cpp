@@ -52,6 +52,15 @@ TStatId FUnrealClientProtocolModule::GetStatId() const
 	RETURN_QUICK_DECLARE_CYCLE_STAT(FUnrealClientProtocolModule, STATGROUP_Tickables);
 }
 
+FUCPRequestHandler* FUnrealClientProtocolModule::GetRequestHandler() const
+{
+	if (Server)
+	{
+		return Server->GetRequestHandler();
+	}
+	return nullptr;
+}
+
 #undef LOCTEXT_NAMESPACE
 
 IMPLEMENT_MODULE(FUnrealClientProtocolModule, UnrealClientProtocol)

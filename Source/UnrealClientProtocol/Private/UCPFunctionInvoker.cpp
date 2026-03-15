@@ -37,7 +37,7 @@ TSharedPtr<FJsonObject> FUCPFunctionInvoker::Invoke(
 			{
 				return MakeErrorResponse(FString(),
 					FString::Printf(TEXT("Latent functions are not supported: %s::%s"),
-						*Obj->GetClass()->GetName(), *FunctionName));
+						*Obj->GetClass()->GetPathName(), *FunctionName));
 			}
 		}
 	}
@@ -104,15 +104,16 @@ TSharedPtr<FJsonObject> FUCPFunctionInvoker::DescribeObject(const FString& Objec
 	for (TFieldIterator<FProperty> It(Class, EFieldIteratorFlags::IncludeSuper); It; ++It)
 	{
 		FProperty* Prop = *It;
-		if (!Prop->HasAnyPropertyFlags(CPF_Edit | CPF_BlueprintVisible))
-		{
-			continue;
-		}
-
 		TSharedPtr<FJsonObject> PropObj = MakeShared<FJsonObject>();
 		PropObj->SetStringField(TEXT("name"), Prop->GetAuthoredName());
 		PropObj->SetStringField(TEXT("type"), GetPropertyTypeString(Prop));
 		PropObj->SetBoolField(TEXT("readOnly"), Prop->HasAnyPropertyFlags(CPF_BlueprintReadOnly) || !Prop->HasAnyPropertyFlags(CPF_Edit));
+
+		const void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Obj);
+		FString ValueStr;
+		Prop->ExportTextItem_Direct(ValueStr, ValuePtr, nullptr, Obj, PPF_None, nullptr);
+		PropObj->SetStringField(TEXT("value"), ValueStr);
+
 		PropArray.Add(MakeShared<FJsonValueObject>(PropObj));
 	}
 	Result->SetArrayField(TEXT("properties"), PropArray);
@@ -121,11 +122,6 @@ TSharedPtr<FJsonObject> FUCPFunctionInvoker::DescribeObject(const FString& Objec
 	for (TFieldIterator<UFunction> It(Class, EFieldIteratorFlags::IncludeSuper); It; ++It)
 	{
 		UFunction* Func = *It;
-		if (!Func->HasAnyFunctionFlags(FUNC_BlueprintCallable | FUNC_BlueprintPure))
-		{
-			continue;
-		}
-
 		TSharedPtr<FJsonObject> FuncObj = MakeShared<FJsonObject>();
 		FuncObj->SetStringField(TEXT("name"), Func->GetName());
 		FuncObj->SetBoolField(TEXT("isStatic"), Func->HasAnyFunctionFlags(FUNC_Static));
@@ -164,7 +160,7 @@ TSharedPtr<FJsonObject> FUCPFunctionInvoker::DescribeProperty(
 	if (!Prop)
 	{
 		return MakeErrorResponse(FString(),
-			FString::Printf(TEXT("Property not found: %s on %s"), *PropertyName, *Obj->GetClass()->GetName()));
+			FString::Printf(TEXT("Property not found: %s on %s"), *PropertyName, *Obj->GetClass()->GetPathName()));
 	}
 
 	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
@@ -260,6 +256,37 @@ UObject* FUCPFunctionInvoker::FindTargetObject(const FString& ObjectPath, FStrin
 		return Obj;
 	}
 
+	int32 ColonIdx = INDEX_NONE;
+	if (ObjectPath.FindChar(TEXT(':'), ColonIdx))
+	{
+		FString ParentPath = ObjectPath.Left(ColonIdx);
+		FString SubPath = ObjectPath.Mid(ColonIdx + 1);
+
+		FString ParentError;
+		UObject* ParentObj = FindTargetObject(ParentPath, ParentError);
+		if (ParentObj)
+		{
+			Obj = StaticFindObject(UObject::StaticClass(), ParentObj, *SubPath);
+			if (Obj)
+			{
+				return Obj;
+			}
+
+			TArray<UObject*> SubObjects;
+			ParentObj->GetDefaultSubobjects(SubObjects);
+			for (UObject* Sub : SubObjects)
+			{
+				if (Sub && Sub->GetName() == SubPath)
+				{
+					return Sub;
+				}
+			}
+
+			OutError = FString::Printf(TEXT("SubObject not found: '%s' on %s"), *SubPath, *ParentObj->GetPathName());
+			return nullptr;
+		}
+	}
+
 	int32 DotIdx = INDEX_NONE;
 	if (ObjectPath.FindLastChar(TEXT('.'), DotIdx))
 	{
@@ -308,7 +335,7 @@ UFunction* FUCPFunctionInvoker::FindTargetFunction(UObject* Obj, const FString& 
 	UFunction* Func = Obj->FindFunction(FName(*FuncName));
 	if (!Func)
 	{
-		OutError = FString::Printf(TEXT("Function not found: %s on %s"), *FuncName, *Obj->GetClass()->GetName());
+		OutError = FString::Printf(TEXT("Function not found: %s on %s"), *FuncName, *Obj->GetClass()->GetPathName());
 	}
 	return Func;
 }

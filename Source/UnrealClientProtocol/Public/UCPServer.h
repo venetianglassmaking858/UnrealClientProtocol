@@ -42,6 +42,8 @@ public:
 	void Stop();
 	void Tick();
 
+	FUCPRequestHandler* GetRequestHandler() const { return RequestHandler.Get(); }
+
 private:
 	bool OnConnectionAccepted(FSocket* InSocket, const FIPv4Endpoint& InEndpoint);
 

@@ -10,7 +10,7 @@ class FProperty;
 class UFunction;
 class UObject;
 
-class FUCPParamConverter
+class UNREALCLIENTPROTOCOL_API FUCPParamConverter
 {
 public:
 	static FString JsonToParams(

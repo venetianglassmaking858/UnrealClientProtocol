@@ -16,6 +16,11 @@
 			"Name": "UnrealClientProtocol",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "UnrealClientProtocolEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
 		}
 	]
 }

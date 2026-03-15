@@ -6,13 +6,51 @@
 #include "UCPSettings.h"
 #include "UObject/UObjectGlobals.h"
 #include "UObject/UObjectIterator.h"
+#include "UObject/UObjectHash.h"
 #include "UObject/UnrealType.h"
 #include "UObject/Class.h"
 #include "JsonObjectConverter.h"
 #include "Dom/JsonValue.h"
+#include "AssetRegistry/IAssetRegistry.h"
+#include "Misc/OutputDeviceRedirector.h"
 #if WITH_EDITOR
 #include "ScopedTransaction.h"
 #endif
+
+// ---- Log Capture ----
+
+void FUCPLogCapture::Serialize(const TCHAR* V, ELogVerbosity::Type Verbosity, const FName& Category)
+{
+	if (Verbosity <= MinVerbosity)
+	{
+		FString LevelStr;
+		switch (Verbosity)
+		{
+		case ELogVerbosity::Fatal:   LevelStr = TEXT("Fatal"); break;
+		case ELogVerbosity::Error:   LevelStr = TEXT("Error"); break;
+		case ELogVerbosity::Warning: LevelStr = TEXT("Warning"); break;
+		case ELogVerbosity::Display: LevelStr = TEXT("Display"); break;
+		case ELogVerbosity::Log:     LevelStr = TEXT("Log"); break;
+		default:                     LevelStr = TEXT("Verbose"); break;
+		}
+
+		Entries.Add(FString::Printf(TEXT("[%s] %s: %s"), *LevelStr, *Category.ToString(), V));
+
+		if (Verbosity <= ELogVerbosity::Warning)
+		{
+			bHasIssues = true;
+		}
+	}
+}
+
+void FUCPLogCapture::Reset(ELogVerbosity::Type InMinVerbosity)
+{
+	Entries.Empty();
+	MinVerbosity = InMinVerbosity;
+	bHasIssues = false;
+}
+
+// ---- Security ----
 
 static bool IsCallAllowed(const FString& ObjectPath, const FString& FunctionName)
 {
@@ -54,6 +92,53 @@ static bool IsCallAllowed(const FString& ObjectPath, const FString& FunctionName
 	return true;
 }
 
+// ---- Log Capture Nesting ----
+
+ELogVerbosity::Type FUCPRequestHandler::ParseLogLevel(const TSharedPtr<FJsonObject>& Request)
+{
+	if (Request->HasField(TEXT("log_level")))
+	{
+		FString Level = Request->GetStringField(TEXT("log_level"));
+		if (Level == TEXT("all") || Level == TEXT("verbose")) return ELogVerbosity::VeryVerbose;
+		if (Level == TEXT("log"))     return ELogVerbosity::Log;
+		if (Level == TEXT("display")) return ELogVerbosity::Display;
+		if (Level == TEXT("warning")) return ELogVerbosity::Warning;
+		if (Level == TEXT("error"))   return ELogVerbosity::Error;
+	}
+	return ELogVerbosity::Warning;
+}
+
+void FUCPRequestHandler::BeginLogCapture(ELogVerbosity::Type InMinVerbosity)
+{
+	LogCaptureDepth++;
+	if (LogCaptureDepth == 1)
+	{
+		LogCapture.Reset(InMinVerbosity);
+		FOutputDeviceRedirector::Get()->AddOutputDevice(&LogCapture);
+	}
+}
+
+void FUCPRequestHandler::EndLogCapture(TSharedPtr<FJsonObject>& Response)
+{
+	LogCaptureDepth--;
+	if (LogCaptureDepth == 0)
+	{
+		FOutputDeviceRedirector::Get()->RemoveOutputDevice(&LogCapture);
+
+		if (LogCapture.bHasIssues && Response.IsValid())
+		{
+			TArray<TSharedPtr<FJsonValue>> LogArray;
+			for (const FString& Entry : LogCapture.Entries)
+			{
+				LogArray.Add(MakeShared<FJsonValueString>(Entry));
+			}
+			Response->SetArrayField(TEXT("log"), LogArray);
+		}
+	}
+}
+
+// ---- Request Handling ----
+
 TSharedPtr<FJsonObject> FUCPRequestHandler::HandleRequest(const TSharedPtr<FJsonObject>& Request)
 {
 	if (!Request.IsValid())
@@ -61,17 +146,26 @@ TSharedPtr<FJsonObject> FUCPRequestHandler::HandleRequest(const TSharedPtr<FJson
 		return MakeError(FString(), TEXT("Null request"));
 	}
 
+	ELogVerbosity::Type RequestLogLevel = ParseLogLevel(Request);
+	BeginLogCapture(RequestLogLevel);
+
 	FString Type = Request->GetStringField(TEXT("type"));
+
+	TSharedPtr<FJsonObject> Response;
 
 	if (Type == TEXT("batch"))
 	{
-		TSharedPtr<FJsonObject> Response = ExecBatch(Request);
+		Response = ExecBatch(Request);
 		CopyIdField(Request, Response);
-		return Response;
+	}
+	else
+	{
+		Response = DispatchSingle(Request);
+		CopyIdField(Request, Response);
 	}
 
-	TSharedPtr<FJsonObject> Response = DispatchSingle(Request);
-	CopyIdField(Request, Response);
+	EndLogCapture(Response);
+
 	return Response;
 }
 
@@ -79,11 +173,19 @@ TSharedPtr<FJsonObject> FUCPRequestHandler::DispatchSingle(const TSharedPtr<FJso
 {
 	FString Type = Request->GetStringField(TEXT("type"));
 
-	if (Type == TEXT("call"))           return CallUFunction(Request);
-	if (Type == TEXT("get_property"))   return GetUProperty(Request);
-	if (Type == TEXT("set_property"))   return SetUProperty(Request);
-	if (Type == TEXT("describe"))       return Describe(Request);
-	if (Type == TEXT("find"))           return FindUObjects(Request);
+	if (FUCPCommandDelegate* Handler = ExternalCommands.Find(Type))
+	{
+		return Handler->Execute(Request);
+	}
+
+	if (Type == TEXT("call"))               return CallUFunction(Request);
+	if (Type == TEXT("get_property"))       return GetUProperty(Request);
+	if (Type == TEXT("set_property"))       return SetUProperty(Request);
+	if (Type == TEXT("describe"))           return Describe(Request);
+	if (Type == TEXT("find"))               return FindUObjects(Request);
+	if (Type == TEXT("get_derived_classes"))return GetDerivedClasses(Request);
+	if (Type == TEXT("get_dependencies"))   return GetDependencies(Request);
+	if (Type == TEXT("get_referencers"))    return GetReferencers(Request);
 
 	return MakeError(FString(), FString::Printf(TEXT("Unknown request type: %s"), *Type));
 }
@@ -181,7 +283,7 @@ TSharedPtr<FJsonObject> FUCPRequestHandler::GetUProperty(const TSharedPtr<FJsonO
 	FProperty* Prop = Obj->GetClass()->FindPropertyByName(FName(*PropertyName));
 	if (!Prop)
 	{
-		return MakeError(FString(), FString::Printf(TEXT("Property not found: %s on %s"), *PropertyName, *Obj->GetClass()->GetName()));
+		return MakeError(FString(), FString::Printf(TEXT("Property not found: %s on %s"), *PropertyName, *Obj->GetClass()->GetPathName()));
 	}
 
 	const void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Obj);
@@ -220,7 +322,7 @@ TSharedPtr<FJsonObject> FUCPRequestHandler::SetUProperty(const TSharedPtr<FJsonO
 	FProperty* Prop = Obj->GetClass()->FindPropertyByName(FName(*PropertyName));
 	if (!Prop)
 	{
-		return MakeError(FString(), FString::Printf(TEXT("Property not found: %s on %s"), *PropertyName, *Obj->GetClass()->GetName()));
+		return MakeError(FString(), FString::Printf(TEXT("Property not found: %s on %s"), *PropertyName, *Obj->GetClass()->GetPathName()));
 	}
 
 	TSharedPtr<FJsonValue> JsonVal = Request->TryGetField(TEXT("value"));
@@ -229,10 +331,8 @@ TSharedPtr<FJsonObject> FUCPRequestHandler::SetUProperty(const TSharedPtr<FJsonO
 		return MakeError(FString(), TEXT("Missing 'value' field"));
 	}
 
-	FString TransactionDesc = FString::Printf(TEXT("UCP: Set %s.%s"), *Obj->GetName(), *PropertyName);
-
 #if WITH_EDITOR
-	FScopedTransaction Transaction(FText::FromString(TransactionDesc));
+	FScopedTransaction Transaction(FText::FromString(FString::Printf(TEXT("UCP: Set %s.%s"), *Obj->GetName(), *PropertyName)));
 	Obj->PreEditChange(Prop);
 #endif
 
@@ -332,6 +432,170 @@ TSharedPtr<FJsonObject> FUCPRequestHandler::FindUObjects(const TSharedPtr<FJsonO
 	Result->SetObjectField(TEXT("result"), ResultData);
 
 	return Result;
+}
+
+TSharedPtr<FJsonObject> FUCPRequestHandler::GetDerivedClasses(const TSharedPtr<FJsonObject>& Request)
+{
+	FString ClassName = Request->GetStringField(TEXT("class"));
+	if (ClassName.IsEmpty())
+	{
+		return MakeError(FString(), TEXT("Missing 'class' field"));
+	}
+
+	UClass* TargetClass = FindObject<UClass>(nullptr, *ClassName);
+	if (!TargetClass)
+	{
+		TargetClass = LoadObject<UClass>(nullptr, *ClassName);
+	}
+	if (!TargetClass)
+	{
+		return MakeError(FString(), FString::Printf(TEXT("Class not found: %s"), *ClassName));
+	}
+
+	bool bRecursive = true;
+	if (Request->HasField(TEXT("recursive")))
+	{
+		bRecursive = Request->GetBoolField(TEXT("recursive"));
+	}
+
+	int32 Limit = 500;
+	if (Request->HasField(TEXT("limit")))
+	{
+		Limit = FMath::Clamp((int32)Request->GetNumberField(TEXT("limit")), 1, 10000);
+	}
+
+	TArray<UClass*> DerivedClasses;
+	::GetDerivedClasses(TargetClass, DerivedClasses, bRecursive);
+
+	TArray<TSharedPtr<FJsonValue>> ClassPaths;
+	int32 Count = 0;
+	for (UClass* DerivedClass : DerivedClasses)
+	{
+		ClassPaths.Add(MakeShared<FJsonValueString>(DerivedClass->GetPathName()));
+		if (++Count >= Limit)
+		{
+			break;
+		}
+	}
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+
+	TSharedPtr<FJsonObject> ResultData = MakeShared<FJsonObject>();
+	ResultData->SetArrayField(TEXT("classes"), ClassPaths);
+	ResultData->SetNumberField(TEXT("count"), Count);
+	Result->SetObjectField(TEXT("result"), ResultData);
+
+	return Result;
+}
+
+static UE::AssetRegistry::EDependencyCategory ParseDependencyCategory(const TSharedPtr<FJsonObject>& Request)
+{
+	if (Request->HasField(TEXT("category")))
+	{
+		FString Cat = Request->GetStringField(TEXT("category"));
+		if (Cat == TEXT("manage"))  return UE::AssetRegistry::EDependencyCategory::Manage;
+		if (Cat == TEXT("all"))     return UE::AssetRegistry::EDependencyCategory::All;
+	}
+	return UE::AssetRegistry::EDependencyCategory::Package;
+}
+
+TSharedPtr<FJsonObject> FUCPRequestHandler::GetDependencies(const TSharedPtr<FJsonObject>& Request)
+{
+	FString PackageName = Request->GetStringField(TEXT("package"));
+	if (PackageName.IsEmpty())
+	{
+		return MakeError(FString(), TEXT("Missing 'package' field"));
+	}
+
+	int32 Limit = 10;
+	if (Request->HasField(TEXT("limit")))
+	{
+		Limit = FMath::Clamp((int32)Request->GetNumberField(TEXT("limit")), 1, 10000);
+	}
+
+	UE::AssetRegistry::EDependencyCategory Category = ParseDependencyCategory(Request);
+
+	IAssetRegistry& Registry = IAssetRegistry::GetChecked();
+	TArray<FName> OutDeps;
+	Registry.GetDependencies(FName(*PackageName), OutDeps, Category);
+
+	TArray<TSharedPtr<FJsonValue>> DepPaths;
+	int32 Count = 0;
+	for (const FName& Dep : OutDeps)
+	{
+		DepPaths.Add(MakeShared<FJsonValueString>(Dep.ToString()));
+		if (++Count >= Limit)
+		{
+			break;
+		}
+	}
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+
+	TSharedPtr<FJsonObject> ResultData = MakeShared<FJsonObject>();
+	ResultData->SetArrayField(TEXT("dependencies"), DepPaths);
+	ResultData->SetNumberField(TEXT("count"), Count);
+	Result->SetObjectField(TEXT("result"), ResultData);
+
+	return Result;
+}
+
+TSharedPtr<FJsonObject> FUCPRequestHandler::GetReferencers(const TSharedPtr<FJsonObject>& Request)
+{
+	FString PackageName = Request->GetStringField(TEXT("package"));
+	if (PackageName.IsEmpty())
+	{
+		return MakeError(FString(), TEXT("Missing 'package' field"));
+	}
+
+	int32 Limit = 10;
+	if (Request->HasField(TEXT("limit")))
+	{
+		Limit = FMath::Clamp((int32)Request->GetNumberField(TEXT("limit")), 1, 10000);
+	}
+
+	UE::AssetRegistry::EDependencyCategory Category = ParseDependencyCategory(Request);
+
+	IAssetRegistry& Registry = IAssetRegistry::GetChecked();
+	TArray<FName> OutRefs;
+	Registry.GetReferencers(FName(*PackageName), OutRefs, Category);
+
+	TArray<TSharedPtr<FJsonValue>> RefPaths;
+	int32 Count = 0;
+	for (const FName& Ref : OutRefs)
+	{
+		RefPaths.Add(MakeShared<FJsonValueString>(Ref.ToString()));
+		if (++Count >= Limit)
+		{
+			break;
+		}
+	}
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+
+	TSharedPtr<FJsonObject> ResultData = MakeShared<FJsonObject>();
+	ResultData->SetArrayField(TEXT("referencers"), RefPaths);
+	ResultData->SetNumberField(TEXT("count"), Count);
+	Result->SetObjectField(TEXT("result"), ResultData);
+
+	return Result;
+}
+
+// ---- Registration ----
+
+void FUCPRequestHandler::RegisterCommand(const FString& CommandType, FUCPCommandDelegate Handler)
+{
+	ExternalCommands.Add(CommandType, Handler);
+	UE_LOG(LogTemp, Log, TEXT("[UCP] Registered external command: %s"), *CommandType);
+}
+
+void FUCPRequestHandler::UnregisterCommand(const FString& CommandType)
+{
+	ExternalCommands.Remove(CommandType);
+	UE_LOG(LogTemp, Log, TEXT("[UCP] Unregistered external command: %s"), *CommandType);
 }
 
 TSharedPtr<FJsonObject> FUCPRequestHandler::MakeError(const FString& Id, const FString& Error)

@@ -9,11 +9,27 @@ Communicate with a running UE editor through the UnrealClientProtocol TCP plugin
 
 ## Invocation
 
+**Locate `UCP.py`**: The Python client lives at `scripts/UCP.py` **relative to this SKILL.md file**. When you read this file, note its absolute path and resolve `scripts/UCP.py` from the same directory.
+
+**Method 1 — stdin (preferred):** Write JSON to the Shell tool's stdin via pipe:
+
 ```bash
-python scripts/UCP.py '<JSON>'
+echo '{"type":"find","class":"/Script/Engine.Blueprint","limit":20}' | python <path-to-UCP.py>
 ```
 
-`<JSON>` can be a **single command** (object) or **batch** (array of objects).
+**Method 2 — file (-f):** For very long JSON that may hit shell limits:
+
+```bash
+python <path-to-UCP.py> -f <path-to-json-file>
+```
+
+**Example — batch (stdin):**
+
+```bash
+echo '[{"type":"find","class":"/Script/Engine.StaticMeshActor","limit":50},{"type":"find","class":"/Script/Engine.PointLight","limit":20}]' | python <path-to-UCP.py>
+```
+
+**NEVER** pass JSON as a command-line argument or via `echo ... | --stdin`. These approaches break on PowerShell due to double-quote stripping and curly-brace parsing.
 
 ## Core Principle — "Knowledge First, Describe to Verify"
 
@@ -25,7 +41,7 @@ You (the AI) already possess extensive knowledge of the Unreal Engine C++ / Blue
 flowchart TD
     A[User request] --> B{Do I know the class,\nfunction name, and\nparameter signature?}
     B -->|YES| C[Build JSON command\nfrom UE API knowledge]
-    C --> D[Execute command]
+    C --> D[Write JSON to temp file\nthen execute with -f]
     D --> E{Success?}
     E -->|YES| F[Done]
     E -->|NO| G[Read error + expected\nfields in response]
@@ -49,6 +65,7 @@ flowchart TD
 4. **Read error responses carefully.** A failed `call` returns `{"error":"...", "expected":{...}}` — the `expected` field is the actual function signature. Use it to self-correct without an extra `describe` round-trip.
 5. **WorldContext is auto-injected.** Never pass `WorldContextObject` manually — the plugin fills it automatically for functions with the `WorldContext` meta.
 6. **Latent functions are not supported.** Functions with `FLatentActionInfo` parameter (e.g. `Delay`, `MoveComponentTo`) will be rejected. Use alternative approaches.
+7. **Check the `log` field.** If the response contains a `log` array, it means warnings or errors occurred during execution. Read them to understand side effects.
 
 ## Commands
 
@@ -111,10 +128,12 @@ Value format matches the property type:
 
 Use this when you are **unsure** about an object's API. Do NOT use it routinely for known engine classes.
 
-**Mode 1: Object metadata** — returns class info, property list, function list.
+**Mode 1: Object metadata** — returns class info, property list (with current values), function list.
 ```json
 {"type":"describe","object":"<object_path>"}
 ```
+
+Each property in the response now includes a `value` field with the current value as a string (UE ExportText format).
 
 **Mode 2: Property metadata** — returns type, flags, current value.
 ```json
@@ -132,6 +151,75 @@ Use this when you are **unsure** about an object's API. Do NOT use it routinely 
 {"type":"find","class":"<class_path>","limit":100}
 ```
 
+### get_derived_classes — Find all subclasses of a class
+
+```json
+{"type":"get_derived_classes","class":"<class_path>","recursive":true,"limit":50}
+```
+
+- `class`: Full class path (e.g. `/Script/Engine.MaterialExpression`)
+- `recursive`: (optional, default true) Include indirect subclasses
+- `limit`: (optional, default 50) Max results
+
+Returns `{"classes":[...], "count":N}`.
+
+### get_dependencies — Query asset package dependencies
+
+```json
+{"type":"get_dependencies","package":"/Game/Materials/M_Example","limit":10,"category":"package"}
+```
+
+- `package`: Package path (e.g. `/Game/Materials/M_Example`)
+- `limit`: (optional, default 10) Max results
+- `category`: (optional, default `"package"`) One of `"package"`, `"manage"`, `"all"`
+
+Returns `{"dependencies":[...], "count":N}`.
+
+### get_referencers — Query what references an asset package
+
+```json
+{"type":"get_referencers","package":"/Game/Textures/T_Diffuse","limit":10,"category":"package"}
+```
+
+Same parameters as `get_dependencies`. Returns `{"referencers":[...], "count":N}`.
+
+### undo — Undo the last editor transaction
+
+```json
+{"type":"undo"}
+```
+
+Returns `{"success":true}` or `{"success":false,"error":"Nothing to undo"}`.
+
+### redo — Redo the last undone transaction
+
+```json
+{"type":"redo"}
+```
+
+Returns `{"success":true}` or `{"success":false,"error":"Nothing to redo"}`.
+
+### undo_state — Query the undo/redo stack state
+
+```json
+{"type":"undo_state"}
+```
+
+Returns:
+```json
+{
+  "success": true,
+  "result": {
+    "canUndo": true,
+    "canRedo": false,
+    "undoTitle": "UCP: Set StaticMesh.RelativeLocation",
+    "redoTitle": "",
+    "undoCount": 3,
+    "queueLength": 15
+  }
+}
+```
+
 ## Object Path Conventions
 
 | Kind | Pattern | Example |
@@ -145,17 +233,10 @@ Use this when you are **unsure** about an object's API. Do NOT use it routinely 
 - `UnrealEd` — UEditorActorSubsystem, UEditorAssetLibrary, UEditorLevelLibrary, ...
 - `Foliage`, `Landscape`, `UMG`, `Niagara`, etc. — domain-specific classes.
 
-## Batch Execution
-
-```bash
-python scripts/UCP.py '[{"type":"find","class":"/Script/Engine.World","limit":3},{"type":"describe","object":"/Script/Engine.Default__KismetSystemLibrary"}]'
-```
-
-For large payloads, pipe via stdin:
-
-```bash
-echo '<JSON>' | python scripts/UCP.py --stdin
-```
+**CDO class name convention:** The class name in the CDO path drops the `U` or `A` prefix from the C++ class name. For example:
+- `UKismetSystemLibrary` → `Default__KismetSystemLibrary`
+- `AStaticMeshActor` → `Default__StaticMeshActor`
+- `UMaterialGraphLibrary` → `Default__MaterialGraphLibrary`
 
 ## Common Patterns
 
@@ -195,16 +276,39 @@ echo '<JSON>' | python scripts/UCP.py --stdin
 
 Then use the returned property/function lists to construct subsequent commands.
 
+### Check what a material depends on
+
+```json
+{"type":"get_dependencies","package":"/Game/Materials/M_Example","limit":20}
+```
+
+## Robust Operations with Undo/Redo
+
+Use the undo system to make your operations recoverable and safe:
+
+1. **Check undo state before risky operations** — call `undo_state` to know the current transaction stack, so you can reason about rollback scope.
+
+2. **Undo on failure** — if a multi-step operation partially fails (e.g. WriteGraph reports errors), call `undo` to roll back the partial changes rather than leaving things in a broken state. Each UCP mutation (set_property, call that modifies state) creates its own undo transaction.
+
+3. **Verify after complex operations** — after a complex edit, read back the state to verify correctness. If incorrect, undo and retry with corrections.
+
+4. **Report undo availability** — when the user asks to undo something, check `undo_state` first and report what will be undone (using `undoTitle`).
+
+5. **Batch undo** — a batch of N mutations creates N separate undo transactions. To fully rollback a batch, you may need to call `undo` N times.
+
 ## Error Recovery Strategy
 
 1. **`call` fails** → Read `error` and `expected` from the response. The `expected` field contains the actual function signature. Correct your params and retry.
 2. **Object not found** → Verify the path. Use `find` to locate instances, or check the module name in the CDO path.
 3. **Property not found** → The property name may differ from the Blueprint display name. Use `describe` on the object to see available properties.
 4. **Connection refused** → The editor is not running or the plugin is disabled. Ask the user to check.
+5. **`log` field present** → Warnings/errors occurred during execution. Read the log entries to diagnose issues (e.g. shader compilation failures, missing assets).
 
 ## Response Format
 
 - **Success**: Returns the result value directly, no wrapper. e.g. `find` returns `{"objects":[...],"count":3}`
 - **Failure**: Returns `{"error":"...", "expected":{...}}` where `expected` contains the function signature (`call` only)
 - **Batch**: Returns an array, each element simplified independently
+- **Log**: If warnings or errors occurred during execution, a `log` field (string array) is appended: `"log":["[Warning] LogMaterial: ..."]`
 - **Connection failure**: Returns `{"error":"Cannot connect to UE (...)"}`
+- **Log level**: Add `"log_level":"all"` to any request to capture all log levels (default captures Warning+ only). Options: `"all"`, `"log"`, `"display"`, `"warning"` (default), `"error"`.
