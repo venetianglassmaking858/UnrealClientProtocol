@@ -28,10 +28,12 @@ CDO: `/Script/UnrealClientProtocolEditor.Default__MaterialGraphEditingLibrary`
 |----------|--------|-------------|
 | `ListScopes` | `AssetPath` | Returns available scopes (output pin names, `Composite:` subgraphs) |
 | `ReadGraph` | `AssetPath`, `ScopeName` | Returns text representation. Empty scope = all nodes. |
-| `WriteGraph` | `AssetPath`, `ScopeName`, `GraphText` | Apply changes, returns diff. Always auto-relayouts after apply. |
+| `WriteGraph` | `AssetPath`, `ScopeName`, `GraphText` | Apply changes, returns diff. Auto-relayouts only when nodes or links changed. |
 | `Relayout` | `AssetPath` | Force auto-layout |
 
-**Workflow**: ReadGraph → modify text → WriteGraph. Always read before write.
+**Workflow**: ListScopes → ReadGraph (target scope only) → modify text → WriteGraph. Always read before write.
+
+**Reading strategy**: Call ListScopes first to see available scopes, then ReadGraph only the scope you need. Use empty scope to read all connected nodes, or a specific scope name (e.g. `BaseColor`) to read a subtree. Batch ListScopes + one ReadGraph in a single UCP call.
 
 ## Text Format
 
@@ -186,13 +188,75 @@ These are UE engine built-in UFunctions (from `UMaterialEditingLibrary`). Call v
 | `GetChildInstances` | `Parent` | Get all direct child material instances of a material. |
 | `GetMaterialsReferencingFunction` | `InFunction` | Find all materials using a specific MaterialFunction. |
 
+## Pseudocode Translation — Understand Before Modifying
+
+**CRITICAL: After ReadGraph, always translate the NodeCode into pseudocode before making changes.** NodeCode describes structure (nodes, properties, links), not the visual/mathematical intent. You must reconstruct the logic to avoid breaking it.
+
+### Why this matters
+
+NodeCode text like:
+
+```
+N0 MaterialExpressionTextureSample {Texture:"/Game/T_Noise"} #aabb...
+N1 MaterialExpressionTextureCoordinate {UTiling:2.0, VTiling:2.0} #ccdd...
+N2 MaterialExpressionMultiply #eeff...
+N3 MaterialExpressionScalarParameter {ParameterName:"NoiseStrength", DefaultValue:0.3} #1122...
+N1 -> N0.Coordinates
+N0 -> N2.A
+N3 -> N2.B
+N2 -> [Normal]
+```
+
+Should be understood as:
+
+```
+// Normal map with tiled noise:
+//   UV = TexCoord * (2, 2)
+//   NoiseTex = Sample(T_Noise, UV)
+//   Normal = NoiseTex * NoiseStrength(0.3)
+```
+
+### Workflow
+
+1. **ReadGraph** — get NodeCode text
+2. **Translate to pseudocode** — trace from material outputs backwards, resolve each input chain into expressions
+3. **Reason about the change** — use pseudocode to understand the shader logic
+4. **Edit the NodeCode** — make structural changes with full understanding
+5. **WriteGraph** — apply
+
+### Use a SubAgent for translation
+
+When the material graph is large (15+ nodes) or involves complex shader logic, **launch a SubAgent** to do the translation. This keeps the main context focused on the task instead of drowning in raw NodeCode.
+
+**SubAgent prompt template:**
+
+> Translate the following Material NodeCode into pseudocode. Trace backwards from each material output, resolve all data dependencies into shader expressions, and identify the visual effect pattern.
+>
+> ```
+> (paste NodeCode here)
+> ```
+>
+> Return:
+> 1. Per-output pseudocode (e.g. BaseColor = ..., Roughness = ..., Normal = ...)
+> 2. A brief summary: what visual effect this material achieves, what parameters are exposed, what textures are used
+
+After the SubAgent returns, use its pseudocode to reason about modifications in the main context.
+
+### How to translate (if doing it yourself)
+
+1. Start from material outputs (`[BaseColor]`, `[Roughness]`, `[Normal]`, etc.)
+2. Trace backwards through links — each link is a data dependency
+3. Collapse chains of math nodes into expressions: `Multiply(A, B)` → `A * B`
+4. Name intermediate values by their semantic meaning (e.g. "FresnelMask", "TiledUV")
+5. Identify common patterns: Fresnel, flowmap, parallax, distance blend, etc.
+
 ## Key Rules
 
 1. **Prefer native nodes**. Custom HLSL only for irreducible logic (loops, matrix, bitwise). Use `struct Functions` pattern. **Never put entire effects in one Custom node.**
-2. **Preserve GUIDs** on existing nodes. Omit for new nodes.
-3. **Preserve class names and property formats exactly.**
-4. **ReadGraph before WriteGraph** — always read first.
-5. **Batch with UCP** — combine ListScopes + ReadGraph in one call.
+2. **Translate to pseudocode after reading** — understand the shader logic before editing.
+3. **Preserve GUIDs** on existing nodes. Omit for new nodes.
+4. **Preserve class names and property formats exactly.**
+5. **ReadGraph before WriteGraph** — always read first.
 6. All operations support **Undo** (Ctrl+Z).
 
 ## Error Handling

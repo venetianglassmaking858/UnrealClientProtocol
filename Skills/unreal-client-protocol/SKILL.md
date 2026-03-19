@@ -5,7 +5,7 @@ description: Interact with the running Unreal Engine editor via TCP bridge. Use 
 
 # UnrealClientProtocol
 
-Communicate with a running UE editor through the UnrealClientProtocol TCP plugin. UCP exposes only two built-in commands: `batch` and `call`. All other functionality is provided through Blueprint Function Libraries that you invoke via `call`.
+Communicate with a running UE editor through the UnrealClientProtocol TCP plugin. UCP exposes a single command — call any UFunction on any UObject via JSON. All functionality is provided through Blueprint Function Libraries that you invoke this way.
 
 ## Invocation
 
@@ -15,7 +15,7 @@ Use PowerShell **here-string** (`@'...'@`) to pipe JSON into UCP.py. This avoids
 
 ```powershell
 @'
-{"type":"call","object":"/Script/UnrealClientProtocol.Default__ObjectOperationLibrary","function":"FindObjectInstances","params":{"ClassName":"/Script/Engine.World"}}
+{"object":"/Script/UnrealClientProtocol.Default__ObjectOperationLibrary","function":"FindObjectInstances","params":{"ClassName":"/Script/Engine.World"}}
 '@ | python "<path-to-UCP.py>"
 ```
 
@@ -23,28 +23,30 @@ Use PowerShell **here-string** (`@'...'@`) to pipe JSON into UCP.py. This avoids
 
 **NEVER** use `echo '...'` or `echo "..."` for JSON in PowerShell — quotes and braces will be corrupted.
 
-## Commands
-
-### call — Call a UFunction
+## Command Format
 
 ```json
-{"type":"call","object":"<object_path>","function":"<func_name>","params":{...}}
+{"object":"<object_path>","function":"<func_name>","params":{...}}
 ```
 
 - `object`: Full UObject path — use CDO path for static/library functions, instance path for member methods.
 - `function`: The UFunction name exactly as declared in C++.
 - `params`: (optional) Map of parameter name -> value. UObject* params accept path strings. Omit `WorldContextObject`.
 
-### batch — Run multiple calls in one request
+### Parameter handling
 
-```json
-[
-  {"type":"call","object":"...","function":"...","params":{...}},
-  {"type":"call","object":"...","function":"...","params":{...}}
-]
-```
+- **Out parameters** (`TArray<AActor*>& OutActors`, etc.) can be omitted from `params` — they are auto-initialized and returned as part of the result after execution.
+- **Return values** and all out parameters are serialized together in the response. For example, calling `GetAllActorsOfClass` with only `{"ActorClass":"/Script/Engine.StaticMeshActor"}` returns `{"OutActors":["/Game/Maps/Main.Main:PersistentLevel.Cube_0", ...]}`.
+- **UObject\* parameters** accept full object paths as strings. The system resolves them automatically.
 
-Pass a JSON array to UCP.py — it wraps them in a batch automatically.
+## Complex Operation Strategy
+
+When an operation involves predictable multi-step logic (loops, conditionals, bulk modifications), **do NOT issue many individual calls**. Instead:
+
+1. Write a Python script that performs all the steps in one go.
+2. Execute it via a single call to `UPythonScriptLibrary::ExecutePythonScript`.
+
+This dramatically reduces tool-call round-trips and gives you the full power of Python for flow control.
 
 ## Core Principle — "Knowledge First"
 
@@ -53,11 +55,11 @@ You (the AI) already possess extensive knowledge of the Unreal Engine C++ / Blue
 ### Key Rules
 
 1. **Construct from knowledge first.** You know UE APIs. Just call them.
-2. **Batch aggressively.** Group independent calls into one JSON array to reduce round-trips.
+2. **Script for bulk operations.** When you need loops or conditionals, write a Python script and execute it via `ExecutePythonScript`.
 3. **WorldContext is auto-injected.** Never pass `WorldContextObject` manually.
 4. **Latent functions are not supported.** Functions with `FLatentActionInfo` will be rejected.
 5. **Check the `log` field.** If the response contains a `log` array, warnings or errors occurred.
-6. **Read error responses carefully.** A failed `call` returns `{"error":"...", "expected":{...}}` — use it to self-correct.
+6. **Read error responses carefully.** A failed call returns `{"error":"...", "expected":{...}}` — use it to self-correct.
 
 ## Object Path Conventions
 
@@ -71,7 +73,7 @@ You (the AI) already possess extensive knowledge of the Unreal Engine C++ / Blue
 
 ## Available Blueprint Function Libraries
 
-UCP provides several function libraries accessible via `call`. Each has its own Skill for detailed documentation:
+UCP provides several function libraries. Each has its own Skill for detailed documentation:
 
 | Library | CDO Path | Skill | Purpose |
 |---------|----------|-------|---------|
@@ -85,6 +87,6 @@ UCP provides several function libraries accessible via `call`. Each has its own 
 
 - **Success**: Returns the result value directly, no wrapper.
 - **Failure**: Returns `{"error":"...", "expected":{...}}` where `expected` contains the function signature.
-- **Batch**: Returns an array, each element simplified independently.
+- **Transaction ID**: Every response includes an `"id"` field (e.g. `"UCP-A1B2C3D4"`), automatically generated by the plugin. This ID is also the Undo transaction description — record it for safe undo (see `unreal-object-operation` skill).
 - **Log**: If warnings/errors occurred, a `log` field (string array) is appended.
 - **Log level**: Add `"log_level":"all"` to any request to capture all log levels (default captures Warning+). Options: `"all"`, `"log"`, `"display"`, `"warning"` (default), `"error"`.

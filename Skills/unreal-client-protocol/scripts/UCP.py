@@ -1,13 +1,11 @@
 """
 CLI tool for communicating with the UnrealClientProtocol TCP plugin.
 
-Accepts either a single JSON command or a JSON array of commands.
+Accepts a single JSON command from stdin.
 Connects to the UE editor via TCP (4-byte LE length-prefixed framing).
 
 Usage:
     echo <json> | python UCP.py
-
-Default mode: reads JSON from stdin.
 
 Environment:
     UE_HOST    (default 127.0.0.1)
@@ -65,23 +63,13 @@ def _simplify(resp: dict):
     return out
 
 
-def execute(commands) -> str:
+def execute(command: dict) -> str:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(TIMEOUT)
     try:
         sock.connect((UE_HOST, UE_PORT))
-
-        if isinstance(commands, list):
-            request = {"type": "batch", "commands": commands}
-            resp = send_receive(sock, request)
-            results = [_simplify(r) for r in resp.get("results", [])]
-            output = results
-            if "log" in resp:
-                output = {"results": results, "log": resp["log"]}
-            return json.dumps(output, indent=2, ensure_ascii=False)
-        else:
-            resp = send_receive(sock, commands)
-            return json.dumps(_simplify(resp), indent=2, ensure_ascii=False)
+        resp = send_receive(sock, command)
+        return json.dumps(_simplify(resp), indent=2, ensure_ascii=False)
     except (ConnectionError, ConnectionRefusedError, OSError) as e:
         return json.dumps({"error": f"Cannot connect to UE ({e}). Is the editor running?"}, ensure_ascii=False)
     finally:
@@ -95,6 +83,10 @@ def main():
         data = json.loads(raw)
     except json.JSONDecodeError as e:
         print(json.dumps({"error": f"Invalid JSON: {e}"}))
+        sys.exit(1)
+
+    if not isinstance(data, dict):
+        print(json.dumps({"error": "Expected a JSON object, not an array or primitive"}))
         sys.exit(1)
 
     print(execute(data))
