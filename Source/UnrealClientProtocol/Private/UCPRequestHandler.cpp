@@ -6,6 +6,10 @@
 #include "UObject/UObjectGlobals.h"
 #include "Dom/JsonValue.h"
 #include "Misc/OutputDeviceRedirector.h"
+#include "Misc/Guid.h"
+#if WITH_EDITOR
+#include "ScopedTransaction.h"
+#endif
 
 // ---- Log Capture ----
 
@@ -136,75 +140,24 @@ TSharedPtr<FJsonObject> FUCPRequestHandler::HandleRequest(const TSharedPtr<FJson
 		return MakeError(FString(), TEXT("Null request"));
 	}
 
+	FString RequestId = FString::Printf(TEXT("UCP-%08X"), FGuid::NewGuid().A);
+
 	ELogVerbosity::Type RequestLogLevel = ParseLogLevel(Request);
 	BeginLogCapture(RequestLogLevel);
 
-	FString Type = Request->GetStringField(TEXT("type"));
-
 	TSharedPtr<FJsonObject> Response;
-
-	if (Type == TEXT("batch"))
+#if WITH_EDITOR
 	{
-		Response = ExecBatch(Request);
-		CopyIdField(Request, Response);
+		FScopedTransaction Transaction(FText::FromString(RequestId));
+		Response = CallUFunction(Request);
 	}
-	else
-	{
-		Response = DispatchSingle(Request);
-		CopyIdField(Request, Response);
-	}
+#else
+	Response = CallUFunction(Request);
+#endif
 
+	Response->SetStringField(TEXT("id"), RequestId);
 	EndLogCapture(Response);
 
-	return Response;
-}
-
-TSharedPtr<FJsonObject> FUCPRequestHandler::DispatchSingle(const TSharedPtr<FJsonObject>& Request)
-{
-	FString Type = Request->GetStringField(TEXT("type"));
-
-	if (FUCPCommandDelegate* Handler = ExternalCommands.Find(Type))
-	{
-		return Handler->Execute(Request);
-	}
-
-	if (Type == TEXT("call"))
-	{
-		return CallUFunction(Request);
-	}
-
-	return MakeError(FString(), FString::Printf(TEXT("Unknown request type: %s"), *Type));
-}
-
-TSharedPtr<FJsonObject> FUCPRequestHandler::ExecBatch(const TSharedPtr<FJsonObject>& Request)
-{
-	const TArray<TSharedPtr<FJsonValue>>* Commands;
-	if (!Request->TryGetArrayField(TEXT("commands"), Commands))
-	{
-		return MakeError(FString(), TEXT("batch request requires a 'commands' array"));
-	}
-
-	TArray<TSharedPtr<FJsonValue>> Results;
-	Results.Reserve(Commands->Num());
-
-	for (const TSharedPtr<FJsonValue>& CmdVal : *Commands)
-	{
-		TSharedPtr<FJsonObject> CmdObj = CmdVal->AsObject();
-		if (!CmdObj.IsValid())
-		{
-			TSharedPtr<FJsonObject> Err = MakeError(FString(), TEXT("Each command in batch must be a JSON object"));
-			Results.Add(MakeShared<FJsonValueObject>(Err));
-			continue;
-		}
-
-		TSharedPtr<FJsonObject> SingleResp = DispatchSingle(CmdObj);
-		CopyIdField(CmdObj, SingleResp);
-		Results.Add(MakeShared<FJsonValueObject>(SingleResp));
-	}
-
-	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
-	Response->SetBoolField(TEXT("success"), true);
-	Response->SetArrayField(TEXT("results"), Results);
 	return Response;
 }
 
@@ -246,20 +199,6 @@ TSharedPtr<FJsonObject> FUCPRequestHandler::CallUFunction(const TSharedPtr<FJson
 	return Result;
 }
 
-// ---- Registration ----
-
-void FUCPRequestHandler::RegisterCommand(const FString& CommandType, FUCPCommandDelegate Handler)
-{
-	ExternalCommands.Add(CommandType, Handler);
-	UE_LOG(LogTemp, Log, TEXT("[UCP] Registered external command: %s"), *CommandType);
-}
-
-void FUCPRequestHandler::UnregisterCommand(const FString& CommandType)
-{
-	ExternalCommands.Remove(CommandType);
-	UE_LOG(LogTemp, Log, TEXT("[UCP] Unregistered external command: %s"), *CommandType);
-}
-
 TSharedPtr<FJsonObject> FUCPRequestHandler::MakeError(const FString& Id, const FString& Error)
 {
 	TSharedPtr<FJsonObject> Resp = MakeShared<FJsonObject>();
@@ -272,10 +211,3 @@ TSharedPtr<FJsonObject> FUCPRequestHandler::MakeError(const FString& Id, const F
 	return Resp;
 }
 
-void FUCPRequestHandler::CopyIdField(const TSharedPtr<FJsonObject>& From, const TSharedPtr<FJsonObject>& To)
-{
-	if (From.IsValid() && To.IsValid() && From->HasField(TEXT("id")))
-	{
-		To->SetStringField(TEXT("id"), From->GetStringField(TEXT("id")));
-	}
-}

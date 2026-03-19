@@ -6,7 +6,6 @@
 #include "Modules/ModuleManager.h"
 
 class FUCPServer;
-class FUCPRequestHandler;
 
 class UNREALCLIENTPROTOCOL_API FUnrealClientProtocolModule : public IModuleInterface, public FTickableGameObject
 {
@@ -18,8 +17,6 @@ public:
 	virtual TStatId GetStatId() const override;
 	virtual bool IsTickable() const override { return bIsRunning; }
 	virtual bool IsTickableInEditor() const override { return true; }
-
-	FUCPRequestHandler* GetRequestHandler() const;
 
 	static FUnrealClientProtocolModule& Get()
 	{
