@@ -37,7 +37,12 @@ struct FNodeCodeSectionIR
 
 	TMap<FString, FString> Properties;
 
-	bool IsGraphSection() const { return Type != TEXT("Properties") && Type != TEXT("Variables"); }
+	// For sections with custom text format (e.g. WidgetTree's indentation-based tree)
+	FString RawText;
+
+	bool IsGraphSection() const { return Type != TEXT("Properties") && Type != TEXT("Variables") && Type != TEXT("WidgetTree"); }
+
+	bool IsRawTextSection() const { return Type == TEXT("WidgetTree"); }
 
 	FString GetHeader() const
 	{

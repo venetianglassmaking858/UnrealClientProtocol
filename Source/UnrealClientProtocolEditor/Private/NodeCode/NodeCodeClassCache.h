@@ -7,16 +7,19 @@
 class FNodeCodeClassCache
 {
 public:
-	FNodeCodeClassCache(UClass* InBaseClass);
+	static FNodeCodeClassCache& Get();
 
-	void Build();
+	void RegisterBaseClass(UClass* BaseClass);
 
 	UClass* FindClass(const FString& ClassName) const;
 
 	FString GetSerializableName(UClass* InClass) const;
 
 private:
-	UClass* BaseClass;
+	void EnsureBuilt() const;
+	void Build();
+
+	TArray<UClass*> BaseClasses;
 	TMap<FName, UClass*> NameToClass;
 	TSet<FName> AmbiguousNames;
 	bool bBuilt = false;

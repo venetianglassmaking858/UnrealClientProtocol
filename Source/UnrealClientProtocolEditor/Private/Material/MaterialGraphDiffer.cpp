@@ -1,7 +1,7 @@
 // MIT License - Copyright (c) 2025 Italink
 
 #include "Material/MaterialGraphDiffer.h"
-#include "Material/MaterialExpressionClassCache.h"
+#include "NodeCode/NodeCodeClassCache.h"
 #include "Material/MaterialGraphSerializer.h"
 #include "Material/IMaterialPropertyHandler.h"
 #include "NodeCode/NodeCodeTextFormat.h"
@@ -309,8 +309,6 @@ FNodeCodeDiffResult FMaterialGraphDiffer::DiffAndApply(
 {
 	FNodeCodeDiffResult Result;
 
-	FMaterialExpressionClassCache::Get().Build();
-
 	FNodeCodeGraphIR OldIR;
 	if (Material)
 	{
@@ -376,7 +374,7 @@ FNodeCodeDiffResult FMaterialGraphDiffer::DiffAndApply(
 		}
 		else
 		{
-			UClass* ExprClass = FMaterialExpressionClassCache::Get().FindClass(NewNode.ClassName);
+			UClass* ExprClass = FNodeCodeClassCache::Get().FindClass(NewNode.ClassName);
 			if (!ExprClass)
 			{
 				UE_LOG(LogUCPMaterial, Error, TEXT("WriteGraph: Unknown expression class: %s"), *NewNode.ClassName);
@@ -653,7 +651,7 @@ FNodeCodeDiffResult FMaterialGraphDiffer::DiffAndApply(
 	{
 		Link.FromExpr->ConnectExpression(Link.ToInput, Link.OutputIndex);
 		Result.LinksAdded.Add(FString::Printf(TEXT("%s[%d] -> input"),
-			*FMaterialExpressionClassCache::Get().GetSerializableName(Link.FromExpr->GetClass()),
+			*FNodeCodeClassCache::Get().GetSerializableName(Link.FromExpr->GetClass()),
 			Link.OutputIndex));
 	}
 
@@ -674,7 +672,7 @@ FNodeCodeDiffResult FMaterialGraphDiffer::DiffAndApply(
 				UMaterialGraphNode* GraphNode = Cast<UMaterialGraphNode>(Node);
 				if (!GraphNode || !GraphNode->MaterialExpression) continue;
 				Result.NodesRemoved.Add(FString::Printf(TEXT("(orphaned) %s"),
-					*FMaterialExpressionClassCache::Get().GetSerializableName(GraphNode->MaterialExpression->GetClass())));
+					*FNodeCodeClassCache::Get().GetSerializableName(GraphNode->MaterialExpression->GetClass())));
 				UMaterialExpression* Expr = GraphNode->MaterialExpression;
 				Material->GetExpressionCollection().RemoveExpression(Expr);
 				Material->RemoveExpressionParameter(Expr);

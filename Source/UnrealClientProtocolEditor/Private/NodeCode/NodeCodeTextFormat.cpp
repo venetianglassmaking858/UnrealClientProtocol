@@ -326,7 +326,11 @@ FString FNodeCodeTextFormat::SectionToText(const FNodeCodeSectionIR& Section)
 {
 	FString Result = Section.GetHeader() + TEXT("\n\n");
 
-	if (Section.IsGraphSection())
+	if (Section.IsRawTextSection())
+	{
+		Result += Section.RawText;
+	}
+	else if (Section.IsGraphSection())
 	{
 		Result += GraphToText(Section.Graph);
 	}
@@ -359,6 +363,12 @@ FNodeCodeSectionIR FNodeCodeTextFormat::ParseSection(const FString& Text, const 
 	FNodeCodeSectionIR Section;
 	Section.Type = Type;
 	Section.Name = Name;
+
+	if (Section.IsRawTextSection())
+	{
+		Section.RawText = Text;
+		return Section;
+	}
 
 	TArray<FString> Lines;
 	Text.ParseIntoArrayLines(Lines);
@@ -398,7 +408,15 @@ FNodeCodeDocumentIR FNodeCodeTextFormat::ParseDocument(const FString& Text)
 		Section.Type = CurrentType;
 		Section.Name = CurrentName;
 
-		if (Section.IsGraphSection())
+		if (Section.IsRawTextSection())
+		{
+			Section.RawText = FString::Join(CurrentLines, TEXT("\n"));
+			if (!Section.RawText.IsEmpty())
+			{
+				Section.RawText += TEXT("\n");
+			}
+		}
+		else if (Section.IsGraphSection())
 		{
 			ParseGraphLines(CurrentLines, Section.Graph);
 		}

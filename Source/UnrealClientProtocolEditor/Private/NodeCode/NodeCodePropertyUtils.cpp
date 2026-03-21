@@ -133,3 +133,27 @@ const TSet<FName>& FNodeCodePropertyUtils::GetMaterialExpressionSkipSet()
 	}
 	return SkipSet;
 }
+
+const TSet<FName>& FNodeCodePropertyUtils::GetWidgetSkipSet()
+{
+	static TSet<FName> SkipSet;
+	if (SkipSet.Num() == 0)
+	{
+		SkipSet.Add(TEXT("Slot"));
+		SkipSet.Add(TEXT("bIsVariable"));
+		SkipSet.Add(TEXT("bIsDesignTime"));
+		SkipSet.Add(TEXT("DesignerFlags"));
+		SkipSet.Add(TEXT("DisplayLabel"));
+		SkipSet.Add(TEXT("bLockedInDesigner"));
+		SkipSet.Add(TEXT("DesignSizeMode"));
+		SkipSet.Add(TEXT("NativeBindings"));
+		SkipSet.Add(TEXT("ToolTipWidget"));
+		SkipSet.Add(TEXT("Navigation"));
+		SkipSet.Add(TEXT("FlowDirectionPreference"));
+		SkipSet.Add(TEXT("bCreatedByConstructionScript"));
+		SkipSet.Add(TEXT("bExpandedInDesigner"));
+		SkipSet.Add(TEXT("bHiddenInDesigner"));
+		SkipSet.Add(TEXT("CategoryName"));
+	}
+	return SkipSet;
+}

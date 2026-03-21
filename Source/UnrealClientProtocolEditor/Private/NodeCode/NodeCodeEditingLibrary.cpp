@@ -3,9 +3,15 @@
 #include "NodeCode/NodeCodeEditingLibrary.h"
 #include "NodeCode/INodeCodeSectionHandler.h"
 #include "NodeCode/NodeCodeTextFormat.h"
+#include "NodeCode/NodeCodeClassCache.h"
 
 #include "Blueprint/BlueprintSectionHandler.h"
 #include "Material/MaterialSectionHandler.h"
+#include "Widget/WidgetTreeSectionHandler.h"
+
+#include "EdGraph/EdGraphNode.h"
+#include "Materials/MaterialExpression.h"
+#include "Components/Widget.h"
 
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonWriter.h"
@@ -18,9 +24,15 @@ struct FNodeCodeHandlerAutoRegister
 {
 	FNodeCodeHandlerAutoRegister()
 	{
+		auto& ClassCache = FNodeCodeClassCache::Get();
+		ClassCache.RegisterBaseClass(UEdGraphNode::StaticClass());
+		ClassCache.RegisterBaseClass(UMaterialExpression::StaticClass());
+		ClassCache.RegisterBaseClass(UWidget::StaticClass());
+
 		auto& Registry = FNodeCodeSectionHandlerRegistry::Get();
 		Registry.Register(MakeShared<FBlueprintSectionHandler>());
 		Registry.Register(MakeShared<FMaterialSectionHandler>());
+		Registry.Register(MakeShared<FWidgetTreeSectionHandler>());
 	}
 };
 

@@ -23,8 +23,8 @@ UCP 的定位不是"自动化工具"，而是"能力协议"。它不预设 Agent
 **现有案例：**
 - 协议层：`call` 命令通过反射调用任意 UFunction——零特化
 - 属性读写：`SetObjectProperty` / `GetObjectProperty` 通过反射操作任意 UPROPERTY——零特化
-- 材质节点类名：`MaterialExpressionClassCache` 通过 `GetDerivedClasses` 自动发现所有表达式类——零特化
-- Skip 属性列表：集中在 `NodeCodePropertyUtils` 的两个共享静态 set 中——受限的例外
+- 类名解析：统一的 `FNodeCodeClassCache` 单例通过 `RegisterBaseClass` + `GetDerivedClasses` 自动发现所有蓝图节点类、材质表达式类、Widget 类——零特化
+- Skip 属性列表：集中在 `NodeCodePropertyUtils` 的共享静态 set 中（EdGraphNode / MaterialExpression / Widget）——受限的例外
 
 ### 原则 2：注册式扩展，不改核心代码
 
@@ -63,6 +63,7 @@ UCP 的定位不是"自动化工具"，而是"能力协议"。它不预设 Agent
 **现有案例：**
 - 蓝图：每个 `UEdGraph` 是一个 Section（EventGraph / Function / Macro），节点物理隔离——正确
 - 材质：`[Material]` = 完整主图，`[Composite:Name]` = 子图，节点不跨 Section——正确
+- Widget Blueprint：`[WidgetTree]` = 完整 widget 层级树，与图表 Section（EventGraph/Function）物理隔离——正确
 - 材质旧设计：按输出引脚分 Scope，TextureSample 同时出现在 BaseColor 和 Roughness——**错误，已废弃**
 
 ### 原则 5：读写语义对称
@@ -118,15 +119,17 @@ UCP 的定位不是"自动化工具"，而是"能力协议"。它不预设 Agent
 │    ├─ FBlueprintSectionHandler                  │
 │    │    ├─ IBlueprintNodeEncoder 注册表          │
 │    │    └─ 蓝图 Serializer / Differ             │
-│    └─ FMaterialSectionHandler                   │
-│         ├─ IMaterialPropertyHandler 注册表       │
-│         └─ 材质 Serializer / Differ             │
+│    ├─ FMaterialSectionHandler                   │
+│    │    ├─ IMaterialPropertyHandler 注册表       │
+│    │    └─ 材质 Serializer / Differ             │
+│    └─ FWidgetTreeSectionHandler                 │
+│         └─ WidgetTreeSerializer                 │
 ├─────────────────────────────────────────────────┤
 │             NodeCode 核心层                      │
 │  NodeCodeTypes (IR 结构)                        │
 │  NodeCodeTextFormat (文本 ↔ IR)                 │
 │  NodeCodePropertyUtils (属性过滤/格式化)         │
-│  NodeCodeClassCache (类名缓存)                   │
+│  NodeCodeClassCache (统一类名缓存/多基类注册)      │
 ├─────────────────────────────────────────────────┤
 │              协议传输层                          │
 │  FUCPServer (TCP)                               │

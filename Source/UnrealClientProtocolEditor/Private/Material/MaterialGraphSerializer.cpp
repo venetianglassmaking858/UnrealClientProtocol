@@ -1,7 +1,7 @@
 // MIT License - Copyright (c) 2025 Italink
 
 #include "Material/MaterialGraphSerializer.h"
-#include "Material/MaterialExpressionClassCache.h"
+#include "NodeCode/NodeCodeClassCache.h"
 #include "Material/IMaterialPropertyHandler.h"
 #include "NodeCode/NodeCodeTextFormat.h"
 #include "NodeCode/NodeCodePropertyUtils.h"
@@ -225,8 +225,6 @@ FNodeCodeGraphIR FMaterialGraphSerializer::BuildIRFromExpressions(
 	UMaterialFunction* MaterialFunction,
 	UMaterialExpressionComposite* TargetComposite)
 {
-	FMaterialExpressionClassCache::Get().Build();
-
 	FNodeCodeGraphIR IR;
 
 	TSet<UMaterialExpression*> ReachableSet;
@@ -286,7 +284,7 @@ FNodeCodeGraphIR FMaterialGraphSerializer::BuildIRFromExpressions(
 		Node.Index = NodeCounter;
 		Node.SourceObject = Expr.Get();
 		Node.Guid = Expr->MaterialExpressionGuid;
-		Node.ClassName = FMaterialExpressionClassCache::Get().GetSerializableName(Expr->GetClass());
+		Node.ClassName = FNodeCodeClassCache::Get().GetSerializableName(Expr->GetClass());
 
 		SerializeNodeProperties(Expr.Get(), Node.Properties);
 

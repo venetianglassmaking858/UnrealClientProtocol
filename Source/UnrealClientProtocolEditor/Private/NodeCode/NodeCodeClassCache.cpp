@@ -4,27 +4,46 @@
 #include "UObject/UObjectHash.h"
 #include "UObject/Class.h"
 
-FNodeCodeClassCache::FNodeCodeClassCache(UClass* InBaseClass)
-	: BaseClass(InBaseClass)
+FNodeCodeClassCache& FNodeCodeClassCache::Get()
 {
+	static FNodeCodeClassCache Instance;
+	return Instance;
+}
+
+void FNodeCodeClassCache::RegisterBaseClass(UClass* BaseClass)
+{
+	if (BaseClass && !BaseClasses.Contains(BaseClass))
+	{
+		BaseClasses.Add(BaseClass);
+		bBuilt = false;
+	}
+}
+
+void FNodeCodeClassCache::EnsureBuilt() const
+{
+	if (!bBuilt)
+	{
+		const_cast<FNodeCodeClassCache*>(this)->Build();
+	}
 }
 
 void FNodeCodeClassCache::Build()
 {
-	if (bBuilt)
-	{
-		return;
-	}
-
-	TArray<UClass*> DerivedClasses;
-	GetDerivedClasses(BaseClass, DerivedClasses, true);
+	NameToClass.Empty();
+	AmbiguousNames.Empty();
 
 	TMap<FName, TArray<UClass*>> NameCollisions;
 
-	for (UClass* Class : DerivedClasses)
+	for (UClass* BaseClass : BaseClasses)
 	{
-		FName ShortName = Class->GetFName();
-		NameCollisions.FindOrAdd(ShortName).Add(Class);
+		TArray<UClass*> DerivedClasses;
+		GetDerivedClasses(BaseClass, DerivedClasses, true);
+
+		for (UClass* Class : DerivedClasses)
+		{
+			FName ShortName = Class->GetFName();
+			NameCollisions.FindOrAdd(ShortName).Add(Class);
+		}
 	}
 
 	for (auto& Pair : NameCollisions)
@@ -49,15 +68,23 @@ void FNodeCodeClassCache::Build()
 
 UClass* FNodeCodeClassCache::FindClass(const FString& ClassName) const
 {
+	EnsureBuilt();
+
 	if (UClass* const* Found = NameToClass.Find(FName(*ClassName)))
 	{
 		return *Found;
 	}
 
 	UClass* FoundClass = UClass::TryFindTypeSlow<UClass>(ClassName, EFindFirstObjectOptions::ExactClass);
-	if (FoundClass && FoundClass->IsChildOf(BaseClass))
+	if (FoundClass)
 	{
-		return FoundClass;
+		for (UClass* BaseClass : BaseClasses)
+		{
+			if (FoundClass->IsChildOf(BaseClass))
+			{
+				return FoundClass;
+			}
+		}
 	}
 
 	return nullptr;
@@ -65,6 +92,8 @@ UClass* FNodeCodeClassCache::FindClass(const FString& ClassName) const
 
 FString FNodeCodeClassCache::GetSerializableName(UClass* InClass) const
 {
+	EnsureBuilt();
+
 	if (!InClass)
 	{
 		return FString();

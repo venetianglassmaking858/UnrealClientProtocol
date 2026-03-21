@@ -14,4 +14,6 @@ public:
 	static const TSet<FName>& GetEdGraphNodeSkipSet();
 
 	static const TSet<FName>& GetMaterialExpressionSkipSet();
+
+	static const TSet<FName>& GetWidgetSkipSet();
 };

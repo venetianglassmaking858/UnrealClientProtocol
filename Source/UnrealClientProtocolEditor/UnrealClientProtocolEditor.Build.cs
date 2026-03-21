@@ -32,6 +32,7 @@ public class UnrealClientProtocolEditor : ModuleRules
 			"MaterialEditor",
 			"BlueprintGraph",
 			"KismetCompiler",
+			"UMG",
 			"Json",
 			"JsonUtilities",
 			"AssetRegistry",

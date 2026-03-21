@@ -2,6 +2,7 @@
 
 #include "Blueprint/IBlueprintNodeEncoder.h"
 #include "NodeCode/NodeCodeTypes.h"
+#include "NodeCode/NodeCodeClassCache.h"
 
 #include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphNode.h"
@@ -53,7 +54,7 @@ FString FBlueprintNodeEncoderRegistry::EncodeNode(UEdGraphNode* Node) const
 			return Encoder->Encode(Node);
 		}
 	}
-	return Node->GetClass()->GetName();
+	return FNodeCodeClassCache::Get().GetSerializableName(Node->GetClass());
 }
 
 UEdGraphNode* FBlueprintNodeEncoderRegistry::DecodeNode(const FString& ClassName, UEdGraph* Graph, UBlueprint* BP, const FNodeCodeNodeIR& IR) const
@@ -66,10 +67,10 @@ UEdGraphNode* FBlueprintNodeEncoderRegistry::DecodeNode(const FString& ClassName
 		}
 	}
 
-	UClass* NodeClass = UClass::TryFindTypeSlow<UClass>(ClassName, EFindFirstObjectOptions::ExactClass);
+	UClass* NodeClass = FNodeCodeClassCache::Get().FindClass(ClassName);
 	if (!NodeClass)
 	{
-		NodeClass = UClass::TryFindTypeSlow<UClass>(FString::Printf(TEXT("K2Node_%s"), *ClassName), EFindFirstObjectOptions::ExactClass);
+		NodeClass = FNodeCodeClassCache::Get().FindClass(FString::Printf(TEXT("K2Node_%s"), *ClassName));
 	}
 	if (NodeClass && NodeClass->IsChildOf(UEdGraphNode::StaticClass()))
 	{

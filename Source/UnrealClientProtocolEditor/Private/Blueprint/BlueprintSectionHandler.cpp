@@ -230,6 +230,45 @@ TMap<FString, FString> FBlueprintSectionHandler::ReadVariables(UBlueprint* Bluep
 	return Result;
 }
 
+static FEdGraphPinType ParsePinTypeFromJson(const TSharedPtr<FJsonObject>& JsonObj)
+{
+	FEdGraphPinType PinType;
+	PinType.PinCategory = FName(*JsonObj->GetStringField(TEXT("PinCategory")));
+
+	if (JsonObj->HasField(TEXT("PinSubCategory")))
+	{
+		PinType.PinSubCategory = FName(*JsonObj->GetStringField(TEXT("PinSubCategory")));
+	}
+
+	if (JsonObj->HasField(TEXT("PinSubCategoryObject")))
+	{
+		FString ObjPath = JsonObj->GetStringField(TEXT("PinSubCategoryObject"));
+		UObject* SubCatObj = StaticLoadObject(UObject::StaticClass(), nullptr, *ObjPath);
+		if (SubCatObj)
+		{
+			PinType.PinSubCategoryObject = SubCatObj;
+		}
+	}
+
+	if (JsonObj->HasField(TEXT("ContainerType")))
+	{
+		FString ContainerStr = JsonObj->GetStringField(TEXT("ContainerType"));
+		if (ContainerStr == TEXT("Array")) PinType.ContainerType = EPinContainerType::Array;
+		else if (ContainerStr == TEXT("Set")) PinType.ContainerType = EPinContainerType::Set;
+		else if (ContainerStr == TEXT("Map")) PinType.ContainerType = EPinContainerType::Map;
+	}
+
+	return PinType;
+}
+
+static bool PinTypesEqual(const FEdGraphPinType& A, const FEdGraphPinType& B)
+{
+	return A.PinCategory == B.PinCategory
+		&& A.PinSubCategory == B.PinSubCategory
+		&& A.PinSubCategoryObject == B.PinSubCategoryObject
+		&& A.ContainerType == B.ContainerType;
+}
+
 FNodeCodeDiffResult FBlueprintSectionHandler::WriteVariables(UBlueprint* Blueprint, const TMap<FString, FString>& Variables)
 {
 	FNodeCodeDiffResult Result;
@@ -240,9 +279,12 @@ FNodeCodeDiffResult FBlueprintSectionHandler::WriteVariables(UBlueprint* Bluepri
 
 	FScopedTransaction Transaction(NSLOCTEXT("UCPBlueprint", "WriteVariables", "UCP: Write Blueprint Variables"));
 
+	TSet<FName> DesiredVarNames;
+
 	for (const auto& Pair : Variables)
 	{
 		FName VarName(*Pair.Key);
+		DesiredVarNames.Add(VarName);
 
 		TSharedPtr<FJsonObject> JsonObj;
 		TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Pair.Value);
@@ -252,31 +294,7 @@ FNodeCodeDiffResult FBlueprintSectionHandler::WriteVariables(UBlueprint* Bluepri
 			continue;
 		}
 
-		FEdGraphPinType PinType;
-		PinType.PinCategory = FName(*JsonObj->GetStringField(TEXT("PinCategory")));
-
-		if (JsonObj->HasField(TEXT("PinSubCategory")))
-		{
-			PinType.PinSubCategory = FName(*JsonObj->GetStringField(TEXT("PinSubCategory")));
-		}
-
-		if (JsonObj->HasField(TEXT("PinSubCategoryObject")))
-		{
-			FString ObjPath = JsonObj->GetStringField(TEXT("PinSubCategoryObject"));
-			UObject* SubCatObj = StaticLoadObject(UObject::StaticClass(), nullptr, *ObjPath);
-			if (SubCatObj)
-			{
-				PinType.PinSubCategoryObject = SubCatObj;
-			}
-		}
-
-		if (JsonObj->HasField(TEXT("ContainerType")))
-		{
-			FString ContainerStr = JsonObj->GetStringField(TEXT("ContainerType"));
-			if (ContainerStr == TEXT("Array")) PinType.ContainerType = EPinContainerType::Array;
-			else if (ContainerStr == TEXT("Set")) PinType.ContainerType = EPinContainerType::Set;
-			else if (ContainerStr == TEXT("Map")) PinType.ContainerType = EPinContainerType::Map;
-		}
+		FEdGraphPinType PinType = ParsePinTypeFromJson(JsonObj);
 
 		FString DefaultValue;
 		if (JsonObj->HasField(TEXT("DefaultValue")))
@@ -284,17 +302,17 @@ FNodeCodeDiffResult FBlueprintSectionHandler::WriteVariables(UBlueprint* Bluepri
 			DefaultValue = JsonObj->GetStringField(TEXT("DefaultValue"));
 		}
 
-		bool bExists = false;
-		for (const FBPVariableDescription& ExistingVar : Blueprint->NewVariables)
+		FBPVariableDescription* ExistingVar = nullptr;
+		for (FBPVariableDescription& Var : Blueprint->NewVariables)
 		{
-			if (ExistingVar.VarName == VarName)
+			if (Var.VarName == VarName)
 			{
-				bExists = true;
+				ExistingVar = &Var;
 				break;
 			}
 		}
 
-		if (!bExists)
+		if (!ExistingVar)
 		{
 			if (FBlueprintEditorUtils::AddMemberVariable(Blueprint, VarName, PinType, DefaultValue))
 			{
@@ -303,14 +321,75 @@ FNodeCodeDiffResult FBlueprintSectionHandler::WriteVariables(UBlueprint* Bluepri
 			else
 			{
 				Result.NodesModified.Add(FString::Printf(TEXT("Failed to create variable: %s"), *Pair.Key));
+				continue;
+			}
+
+			for (FBPVariableDescription& Var : Blueprint->NewVariables)
+			{
+				if (Var.VarName == VarName)
+				{
+					ExistingVar = &Var;
+					break;
+				}
+			}
+		}
+		else
+		{
+			TArray<FString> Changes;
+
+			if (!PinTypesEqual(ExistingVar->VarType, PinType))
+			{
+				FBlueprintEditorUtils::ChangeMemberVariableType(Blueprint, VarName, PinType);
+				Changes.Add(TEXT("type"));
+			}
+
+			if (ExistingVar->DefaultValue != DefaultValue)
+			{
+				ExistingVar->DefaultValue = DefaultValue;
+				Changes.Add(TEXT("default"));
+			}
+
+			bool bDesiredReplicated = JsonObj->HasField(TEXT("Replicated")) && JsonObj->GetBoolField(TEXT("Replicated"));
+			bool bCurrentReplicated = (ExistingVar->PropertyFlags & CPF_Net) != 0;
+			if (bDesiredReplicated != bCurrentReplicated)
+			{
+				if (bDesiredReplicated)
+				{
+					ExistingVar->PropertyFlags |= CPF_Net;
+				}
+				else
+				{
+					ExistingVar->PropertyFlags &= ~CPF_Net;
+				}
+				Changes.Add(TEXT("replicated"));
+			}
+
+			if (Changes.Num() > 0)
+			{
+				Result.NodesModified.Add(FString::Printf(TEXT("Variable %s: %s"), *Pair.Key, *FString::Join(Changes, TEXT(", "))));
 			}
 		}
 
-		if (JsonObj->HasField(TEXT("Category")))
+		if (ExistingVar && JsonObj->HasField(TEXT("Category")))
 		{
 			FBlueprintEditorUtils::SetBlueprintVariableCategory(Blueprint, VarName, nullptr,
 				FText::FromString(JsonObj->GetStringField(TEXT("Category"))));
 		}
+	}
+
+	TArray<FName> VarsToRemove;
+	for (const FBPVariableDescription& Var : Blueprint->NewVariables)
+	{
+		if (!DesiredVarNames.Contains(Var.VarName))
+		{
+			VarsToRemove.Add(Var.VarName);
+		}
+	}
+
+	for (const FName& VarName : VarsToRemove)
+	{
+		FBlueprintEditorUtils::RemoveMemberVariable(Blueprint, VarName);
+		Result.NodesRemoved.Add(FString::Printf(TEXT("Variable: %s"), *VarName.ToString()));
 	}
 
 	return Result;

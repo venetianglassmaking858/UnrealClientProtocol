@@ -34,6 +34,7 @@ Type routes to the appropriate handler. Current types:
 | `Material` | Material | Complete main material graph |
 | `Composite` | Material | Composite subgraph |
 | `Properties` | Material | Material properties (ShadingModel, BlendMode, etc.) |
+| `WidgetTree` | Widget Blueprint | UI widget hierarchy (indentation-based tree format) |
 
 ### Node Lines
 
@@ -88,7 +89,7 @@ Defined in `Private/NodeCode/NodeCodeTypes.h`:
 | `FNodeCodeNodeIR` | Index, ClassName, Guid, Properties, SourceObject | A single node |
 | `FNodeCodeLinkIR` | FromNodeIndex, FromOutputName, ToNodeIndex, ToInputName, bToGraphOutput | A connection |
 | `FNodeCodeGraphIR` | Nodes, Links | A complete node graph |
-| `FNodeCodeSectionIR` | Type, Name, Graph, Properties | A document section (graph or data) |
+| `FNodeCodeSectionIR` | Type, Name, Graph, Properties, RawText | A document section (graph, data, or raw text) |
 | `FNodeCodeDocumentIR` | Sections | Multi-section document |
 | `FNodeCodeDiffResult` | NodesAdded/Removed/Modified, LinksAdded/Removed | Write result |
 
@@ -111,6 +112,7 @@ class INodeCodeSectionHandler
 Implementations:
 - `FBlueprintSectionHandler` — EventGraph / Function / Macro / Variables
 - `FMaterialSectionHandler` — Material / Composite / Properties
+- `FWidgetTreeSectionHandler` — WidgetTree
 
 Handlers register to `FNodeCodeSectionHandlerRegistry`. The unified `UNodeCodeEditingLibrary` dispatches by asset type + section type.
 
@@ -154,9 +156,21 @@ Three-pass matching (shared by Blueprint and Material):
 
 Other node types use their raw UE class name (e.g. `K2Node_IfThenElse`).
 
+### Class Name Resolution
+
+All domains share a unified `FNodeCodeClassCache` singleton for class name resolution. Each domain registers its base class at startup:
+
+```
+FNodeCodeClassCache::Get().RegisterBaseClass(UEdGraphNode::StaticClass());
+FNodeCodeClassCache::Get().RegisterBaseClass(UMaterialExpression::StaticClass());
+FNodeCodeClassCache::Get().RegisterBaseClass(UWidget::StaticClass());
+```
+
+The cache uses `GetDerivedClasses` to discover all subclasses via reflection, then maps short names (e.g. `K2Node_IfThenElse`, `TextureSample`, `CanvasPanel`) to UClass pointers. No hardcoded class lists — new engine classes are automatically available.
+
 ### Material Expression Encoding
 
-Material expressions use their UE class name directly via `MaterialExpressionClassCache` (e.g. `TextureSample`, `ScalarParameter`, `Multiply`). No semantic encoding needed.
+Material expressions use their UE class name directly via `FNodeCodeClassCache` (e.g. `TextureSample`, `ScalarParameter`, `Multiply`). No semantic encoding needed.
 
 Special property handlers (`IMaterialPropertyHandler` registry) for:
 - `UMaterialExpressionCustom` — `InputNames` array
@@ -182,6 +196,25 @@ Special property handlers (`IMaterialPropertyHandler` registry) for:
 - `[Composite:Name]` = physically isolated subgraphs
 - Output pins expressed as `> -> [BaseColor]` graph output connections
 - Auto-recompile, relayout, and editor UI refresh after write
+
+### Widget Blueprint
+
+**Sections:** `[WidgetTree]` (plus all Blueprint sections: `[Variables]`, `[EventGraph]`, `[Function:Name]`, `[Macro:Name]`)
+
+Widget Blueprints are Blueprints, so their graph sections are handled by `FBlueprintSectionHandler`. The `[WidgetTree]` section is handled by a separate `FWidgetTreeSectionHandler`.
+
+The WidgetTree uses an **indentation-based tree format** (not node graph format):
+
+```
+CanvasPanel_0: {"Type":"CanvasPanel"}
+  TextBlock_Title: {"Type":"TextBlock", "Text":"Hello World", "Slot":{"HorizontalAlignment":"HAlign_Center"}}
+  Button_Submit: {"Type":"Button", "Slot":{"Padding":"(Left=0,Top=10,Right=0,Bottom=0)"}, "bIsVariable":true}
+    TextBlock_BtnLabel: {"Type":"TextBlock", "Text":"Submit"}
+```
+
+- 2-space indentation per level represents parent-child relationships
+- Widget name is the line key, JSON value contains Type, Slot, and widget properties
+- Widget type names resolved via `FNodeCodeClassCache` (same as other domains)
 
 ## Adding Support for a New Graph Type
 

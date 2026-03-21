@@ -112,7 +112,14 @@ TargetActor: {"PinCategory":"object", "PinSubCategoryObject":"/Script/Engine.Act
 DamageHistory: {"PinCategory":"real", "PinSubCategory":"double", "ContainerType":"Array"}
 ```
 
-Fields map directly to `FEdGraphPinType` reflection fields. Writing a variable that doesn't exist creates it automatically.
+Fields map directly to `FEdGraphPinType` reflection fields. Optional: `"Replicated":true`, `"Category":"MyCategory"`.
+
+The `[Variables]` section uses **full overwrite** semantics:
+- Variables in the text that don't exist in the Blueprint are **created**.
+- Variables in the text that already exist are **updated** (type, default value, replicated flag, category).
+- Variables in the Blueprint but **not in the text** are **deleted**.
+
+**Always ReadGraph("Variables") first** and include all variables you want to keep.
 
 ## Creating / Deleting Sections
 
